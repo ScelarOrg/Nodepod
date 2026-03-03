@@ -9,6 +9,7 @@ export interface ModuleRecord {
     loaded: boolean;
     children: ModuleRecord[];
     paths: string[];
+    parent: ModuleRecord | null;
 }
 export interface EngineOptions {
     cwd?: string;
@@ -31,6 +32,7 @@ export interface ResolverFn {
     cache: Record<string, ModuleRecord>;
     extensions: Record<string, unknown>;
     main: ModuleRecord | null;
+    _ownerRecord?: ModuleRecord;
 }
 export declare class ScriptEngine {
     private vol;

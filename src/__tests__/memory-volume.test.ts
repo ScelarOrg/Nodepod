@@ -1,0 +1,443 @@
+import { describe, it, expect, vi } from "vitest";
+import { MemoryVolume } from "../memory-volume";
+
+describe("MemoryVolume", () => {
+  describe("writeFileSync / readFileSync", () => {
+    it("writes and reads a string file", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/test.txt", "hello");
+      expect(vol.readFileSync("/test.txt", "utf8")).toBe("hello");
+    });
+
+    it("writes and reads binary data (Uint8Array)", () => {
+      const vol = new MemoryVolume();
+      const data = new Uint8Array([1, 2, 3, 4]);
+      vol.writeFileSync("/bin", data);
+      const result = vol.readFileSync("/bin");
+      expect(result).toBeInstanceOf(Uint8Array);
+      expect(result).toEqual(data);
+    });
+
+    it("overwrites existing file content", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f.txt", "first");
+      vol.writeFileSync("/f.txt", "second");
+      expect(vol.readFileSync("/f.txt", "utf8")).toBe("second");
+    });
+
+    it("auto-creates parent directories", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/a/b/c.txt", "deep");
+      expect(vol.readFileSync("/a/b/c.txt", "utf8")).toBe("deep");
+    });
+
+    it("returns Uint8Array when no encoding specified", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f", "data");
+      expect(vol.readFileSync("/f")).toBeInstanceOf(Uint8Array);
+    });
+
+    it("returns string with utf8 encoding", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f", "text");
+      expect(typeof vol.readFileSync("/f", "utf8")).toBe("string");
+    });
+
+    it("throws ENOENT on read of nonexistent file", () => {
+      const vol = new MemoryVolume();
+      expect(() => vol.readFileSync("/nope")).toThrow();
+    });
+
+    it("handles empty file content", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/empty", "");
+      expect(vol.readFileSync("/empty", "utf8")).toBe("");
+    });
+
+    it("handles file at root level", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/root.txt", "root");
+      expect(vol.readFileSync("/root.txt", "utf8")).toBe("root");
+    });
+  });
+
+  describe("mkdirSync", () => {
+    it("creates a directory", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/dir");
+      expect(vol.statSync("/dir").isDirectory()).toBe(true);
+    });
+
+    it("creates nested directories with recursive:true", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/a/b/c/d", { recursive: true });
+      expect(vol.statSync("/a/b/c/d").isDirectory()).toBe(true);
+    });
+
+    it("does not throw when directory exists with recursive:true", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/dir", { recursive: true });
+      expect(() =>
+        vol.mkdirSync("/dir", { recursive: true }),
+      ).not.toThrow();
+    });
+  });
+
+  describe("readdirSync", () => {
+    it("lists files and directories", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/project", { recursive: true });
+      vol.writeFileSync("/project/a.txt", "a");
+      vol.writeFileSync("/project/b.txt", "b");
+      vol.mkdirSync("/project/sub");
+      const entries = vol.readdirSync("/project");
+      expect(entries).toContain("a.txt");
+      expect(entries).toContain("b.txt");
+      expect(entries).toContain("sub");
+    });
+
+    it("returns empty array for empty directory", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/empty");
+      expect(vol.readdirSync("/empty")).toEqual([]);
+    });
+
+    it("throws ENOENT for nonexistent directory", () => {
+      const vol = new MemoryVolume();
+      expect(() => vol.readdirSync("/nope")).toThrow();
+    });
+  });
+
+  describe("existsSync", () => {
+    it("returns true for existing file", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f", "data");
+      expect(vol.existsSync("/f")).toBe(true);
+    });
+
+    it("returns true for existing directory", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/dir");
+      expect(vol.existsSync("/dir")).toBe(true);
+    });
+
+    it("returns false for nonexistent path", () => {
+      const vol = new MemoryVolume();
+      expect(vol.existsSync("/nope")).toBe(false);
+    });
+
+    it("returns true for root /", () => {
+      const vol = new MemoryVolume();
+      expect(vol.existsSync("/")).toBe(true);
+    });
+  });
+
+  describe("statSync", () => {
+    it("returns correct stat for a file", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f.txt", "hello");
+      const stat = vol.statSync("/f.txt");
+      expect(stat.isFile()).toBe(true);
+      expect(stat.isDirectory()).toBe(false);
+      expect(stat.size).toBe(5);
+    });
+
+    it("returns correct stat for a directory", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/dir");
+      const stat = vol.statSync("/dir");
+      expect(stat.isDirectory()).toBe(true);
+      expect(stat.isFile()).toBe(false);
+    });
+
+    it("has numeric mtimeMs and size fields", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f", "data");
+      const stat = vol.statSync("/f");
+      expect(typeof stat.mtimeMs).toBe("number");
+      expect(typeof stat.size).toBe("number");
+    });
+
+    it("throws ENOENT for nonexistent path", () => {
+      const vol = new MemoryVolume();
+      expect(() => vol.statSync("/nope")).toThrow();
+    });
+  });
+
+  describe("unlinkSync", () => {
+    it("removes a file", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f", "data");
+      vol.unlinkSync("/f");
+      expect(vol.existsSync("/f")).toBe(false);
+    });
+
+    it("throws ENOENT for nonexistent file", () => {
+      const vol = new MemoryVolume();
+      expect(() => vol.unlinkSync("/nope")).toThrow();
+    });
+  });
+
+  describe("rmdirSync", () => {
+    it("removes an empty directory", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/dir");
+      vol.rmdirSync("/dir");
+      expect(vol.existsSync("/dir")).toBe(false);
+    });
+
+    it("throws ENOTEMPTY for non-empty directory", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/dir");
+      vol.writeFileSync("/dir/f.txt", "data");
+      expect(() => vol.rmdirSync("/dir")).toThrow();
+    });
+
+    it("throws ENOENT for nonexistent directory", () => {
+      const vol = new MemoryVolume();
+      expect(() => vol.rmdirSync("/nope")).toThrow();
+    });
+  });
+
+  describe("renameSync", () => {
+    it("moves a file from one path to another", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/old.txt", "data");
+      vol.renameSync("/old.txt", "/new.txt");
+      expect(vol.readFileSync("/new.txt", "utf8")).toBe("data");
+      expect(vol.existsSync("/old.txt")).toBe(false);
+    });
+
+    it("throws ENOENT when source does not exist", () => {
+      const vol = new MemoryVolume();
+      expect(() => vol.renameSync("/nope", "/dest")).toThrow();
+    });
+  });
+
+  describe("copyFileSync", () => {
+    it("copies file content to new path", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/src.txt", "content");
+      vol.copyFileSync("/src.txt", "/dst.txt");
+      expect(vol.readFileSync("/dst.txt", "utf8")).toBe("content");
+      expect(vol.readFileSync("/src.txt", "utf8")).toBe("content");
+    });
+
+    it("throws ENOENT when source does not exist", () => {
+      const vol = new MemoryVolume();
+      expect(() => vol.copyFileSync("/nope", "/dst")).toThrow();
+    });
+  });
+
+  describe("appendFileSync", () => {
+    it("appends to existing file", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f", "hello");
+      vol.appendFileSync("/f", " world");
+      expect(vol.readFileSync("/f", "utf8")).toBe("hello world");
+    });
+
+    it("creates file if it does not exist", () => {
+      const vol = new MemoryVolume();
+      vol.appendFileSync("/new.txt", "fresh");
+      expect(vol.readFileSync("/new.txt", "utf8")).toBe("fresh");
+    });
+  });
+
+  describe("truncateSync", () => {
+    it("truncates file to specified length", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f", "hello world");
+      vol.truncateSync("/f", 5);
+      expect(vol.readFileSync("/f", "utf8")).toBe("hello");
+    });
+
+    it("throws ENOENT for nonexistent file", () => {
+      const vol = new MemoryVolume();
+      expect(() => vol.truncateSync("/nope", 5)).toThrow();
+    });
+  });
+
+  describe("symlinks", () => {
+    it("symlinkSync creates a symlink, readlinkSync reads target", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/target", "data");
+      vol.symlinkSync("/target", "/link");
+      expect(vol.readlinkSync("/link")).toBe("/target");
+    });
+
+    it("reading a symlinked file follows the symlink", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/target", "data");
+      vol.symlinkSync("/target", "/link");
+      expect(vol.readFileSync("/link", "utf8")).toBe("data");
+    });
+
+    it("realpathSync resolves symlink to real path", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/real", "data");
+      vol.symlinkSync("/real", "/sym");
+      expect(vol.realpathSync("/sym")).toBe("/real");
+    });
+
+    it("lstatSync reports symlink for symlink node", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/target", "data");
+      vol.symlinkSync("/target", "/link");
+      expect(vol.lstatSync("/link").isSymbolicLink()).toBe(true);
+    });
+  });
+
+  describe("path normalization", () => {
+    it("normalizes paths with ..", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/a", { recursive: true });
+      vol.writeFileSync("/a/b/../c.txt", "data");
+      expect(vol.readFileSync("/a/c.txt", "utf8")).toBe("data");
+    });
+
+    it("normalizes paths with .", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/./test.txt", "data");
+      expect(vol.readFileSync("/test.txt", "utf8")).toBe("data");
+    });
+
+    it("handles paths without leading /", () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("foo.txt", "data");
+      expect(vol.readFileSync("/foo.txt", "utf8")).toBe("data");
+    });
+  });
+
+  describe("toSnapshot / fromSnapshot", () => {
+    it("round-trips empty volume", () => {
+      const vol = new MemoryVolume();
+      const snap = vol.toSnapshot();
+      const vol2 = MemoryVolume.fromSnapshot(snap);
+      expect(vol2.readdirSync("/")).toEqual([]);
+    });
+
+    it("round-trips volume with files and directories", () => {
+      const vol = new MemoryVolume();
+      vol.mkdirSync("/project/src", { recursive: true });
+      vol.writeFileSync("/project/src/index.ts", "export default 1;");
+      vol.writeFileSync("/project/readme.md", "# Hello");
+
+      const snap = vol.toSnapshot();
+      const vol2 = MemoryVolume.fromSnapshot(snap);
+
+      expect(vol2.readFileSync("/project/src/index.ts", "utf8")).toBe(
+        "export default 1;",
+      );
+      expect(vol2.readFileSync("/project/readme.md", "utf8")).toBe("# Hello");
+    });
+
+    it("round-trips binary file content", () => {
+      const vol = new MemoryVolume();
+      const data = new Uint8Array([0, 128, 255]);
+      vol.writeFileSync("/bin", data);
+      const snap = vol.toSnapshot();
+      const vol2 = MemoryVolume.fromSnapshot(snap);
+      expect(vol2.readFileSync("/bin")).toEqual(data);
+    });
+  });
+
+  describe("watchers", () => {
+    it("watch() fires callback on file write", () => {
+      const vol = new MemoryVolume();
+      const events: string[] = [];
+      vol.watch("/", {}, (event, filename) => {
+        events.push(`${event}:${filename}`);
+      });
+      vol.writeFileSync("/test.txt", "data");
+      expect(events.length).toBeGreaterThan(0);
+    });
+
+    it("watch.close() stops receiving events", () => {
+      const vol = new MemoryVolume();
+      const events: string[] = [];
+      const handle = vol.watch("/", {}, (event, filename) => {
+        events.push(`${event}:${filename}`);
+      });
+      handle.close();
+      vol.writeFileSync("/test.txt", "data");
+      expect(events.length).toBe(0);
+    });
+  });
+
+  describe("createReadStream", () => {
+    it("emits data and end events", async () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f.txt", "stream content");
+      const rs = vol.createReadStream("/f.txt");
+
+      const chunks: Uint8Array[] = [];
+      await new Promise<void>((resolve) => {
+        rs.on("data", (chunk: any) => chunks.push(chunk));
+        rs.on("end", () => resolve());
+      });
+
+      const text = new TextDecoder().decode(chunks[0]);
+      expect(text).toBe("stream content");
+    });
+  });
+
+  describe("createWriteStream", () => {
+    it("write + end flushes data to volume", async () => {
+      const vol = new MemoryVolume();
+      const ws = vol.createWriteStream("/out.txt");
+      ws.write("hello ");
+      ws.end("world");
+
+      // wait for async flush
+      await new Promise((r) => setTimeout(r, 50));
+      expect(vol.readFileSync("/out.txt", "utf8")).toBe("hello world");
+    });
+  });
+
+  describe("event subscription", () => {
+    it("on('change') fires when file is written", () => {
+      const vol = new MemoryVolume();
+      const changes: string[] = [];
+      vol.on("change", (path: string) => changes.push(path));
+      vol.writeFileSync("/f.txt", "data");
+      expect(changes).toContain("/f.txt");
+    });
+
+    it("off() unsubscribes handler", () => {
+      const vol = new MemoryVolume();
+      const changes: string[] = [];
+      const handler = (path: string) => changes.push(path);
+      vol.on("change", handler);
+      vol.off("change", handler);
+      vol.writeFileSync("/f.txt", "data");
+      expect(changes).toEqual([]);
+    });
+  });
+
+  describe("async methods", () => {
+    it("readFile with callback returns data", async () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f.txt", "async data");
+      const data = await new Promise<any>((resolve, reject) => {
+        vol.readFile("/f.txt", { encoding: "utf8" }, (err: any, d: any) => {
+          if (err) reject(err);
+          else resolve(d);
+        });
+      });
+      expect(data).toBe("async data");
+    });
+
+    it("stat with callback returns stats", async () => {
+      const vol = new MemoryVolume();
+      vol.writeFileSync("/f.txt", "data");
+      const stats = await new Promise<any>((resolve, reject) => {
+        vol.stat("/f.txt", (err: any, s: any) => {
+          if (err) reject(err);
+          else resolve(s);
+        });
+      });
+      expect(stats.isFile()).toBe(true);
+    });
+  });
+});
