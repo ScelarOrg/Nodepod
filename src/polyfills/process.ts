@@ -535,6 +535,10 @@ export function buildProcessEnv(config?: {
     },
 
     kill(_pid: number, _signal?: string | number) {
+      // Emit the signal on this process so listeners (e.g. nodemon) can
+      // react to SIGINT / SIGUSR2 etc. just like real Node.js.
+      const sig = typeof _signal === "string" ? _signal : "SIGTERM";
+      bus.emit(sig);
       return true;
     },
 
