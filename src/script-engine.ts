@@ -121,7 +121,11 @@ import {
   hasTopLevelAwait,
   stripTopLevelAwait,
 } from "./syntax-transforms";
-import { getCachedModule, precompileWasm, compileWasmInWorker } from "./helpers/wasm-cache";
+import {
+  getCachedModule,
+  precompileWasm,
+  compileWasmInWorker,
+} from "./helpers/wasm-cache";
 import * as acorn from "acorn";
 
 // ── TypeScript type stripper ──
@@ -224,11 +228,8 @@ function stripTypeScript(source: string): string {
 
 function isTypeScriptFile(filename: string): boolean {
   const clean = filename.split("?")[0];
-  if (
-    clean.endsWith(".ts") ||
-    clean.endsWith(".tsx") ||
-    clean.endsWith(".mts")
-  ) return true;
+  if (clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mts"))
+    return true;
   // Vite SFC query params like ?type=script&lang.ts
   if (filename.includes("lang.ts") || filename.includes("lang=ts")) return true;
   return false;
@@ -245,9 +246,11 @@ function isCSSFile(filename: string): boolean {
     clean.endsWith(".styl") ||
     clean.endsWith(".stylus") ||
     clean.endsWith(".postcss")
-  ) return true;
+  )
+    return true;
   if (filename.includes("type=style")) return true;
-  if (/lang[.=](?:css|scss|sass|less|styl|stylus|postcss)/.test(filename)) return true;
+  if (/lang[.=](?:css|scss|sass|less|styl|stylus|postcss)/.test(filename))
+    return true;
   return false;
 }
 
@@ -255,7 +258,9 @@ function isCSSFile(filename: string): boolean {
 function looksLikeTypeScript(source: string): boolean {
   return (
     /\b(?:interface|type)\s+\w+/.test(source) ||
-    /:\s*(?:string|number|boolean|void|any|never|unknown|Record|Array|Promise)\b/.test(source) ||
+    /:\s*(?:string|number|boolean|void|any|never|unknown|Record|Array|Promise)\b/.test(
+      source,
+    ) ||
     /(?:as\s+(?:string|number|boolean|any|const)\b)/.test(source)
   );
 }
@@ -299,7 +304,12 @@ function convertModuleSyntax(source: string, filePath: string): string {
   try {
     return convertViaAst(source, filePath);
   } catch (astErr) {
-    _nativeConsole.warn("[convertModuleSyntax] AST parse failed for", filePath, "falling back to regex:", astErr instanceof Error ? astErr.message : String(astErr));
+    _nativeConsole.warn(
+      "[convertModuleSyntax] AST parse failed for",
+      filePath,
+      "falling back to regex:",
+      astErr instanceof Error ? astErr.message : String(astErr),
+    );
     return convertViaRegex(source, filePath);
   }
 }
@@ -337,7 +347,7 @@ function convertViaAst(source: string, filePath: string): string {
 
   // apply all patches in one pass
   let output = source;
-  patches.sort((a, b) => b[0] - a[0]);
+  patches.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
   for (const [s, e, r] of patches)
     output = output.slice(0, s) + r + output.slice(e);
 
@@ -356,10 +366,7 @@ function convertViaAst(source: string, filePath: string): string {
 // Demote `const/let require =` to plain assignment to avoid TDZ with esmToCjs-generated require() calls
 function demoteLexicalRequire(code: string): string {
   if (!/\b(?:const|let)\s+require\s*=/.test(code)) return code;
-  return code.replace(
-    /\b(const|let)\s+(require)\s*=/g,
-    "require =",
-  );
+  return code.replace(/\b(const|let)\s+(require)\s*=/g, "require =");
 }
 
 // Builds the IIFE wrapper that sandboxes user code with shimmed globals
@@ -632,7 +639,9 @@ function createSyncPromise(): typeof Promise {
                   res(onRejected(innerErr) as TResult2),
                 ) as any;
               }
-              return new SyncPromise<TResult2>((_, rej) => rej(innerErr)) as any;
+              return new SyncPromise<TResult2>((_, rej) =>
+                rej(innerErr),
+              ) as any;
             }
             return NativePromise.resolve(result).then(null, onRejected) as any;
           }
@@ -670,8 +679,7 @@ function createSyncPromise(): typeof Promise {
 
   // instanceof must work for native Promises too since we inject SyncPromise as `Promise`
   Object.defineProperty(SyncPromise, Symbol.hasInstance, {
-    value: (instance: any) =>
-      instance instanceof NativePromise,
+    value: (instance: any) => instance instanceof NativePromise,
     configurable: true,
   });
 
@@ -704,11 +712,13 @@ function createSyncPromise(): typeof Promise {
           allSync = false;
           break;
         }
-      } else if (
-        v && typeof v === "object" && typeof v.then === "function"
-      ) {
-        let probed = false, pVal: any;
-        v.then((x: any) => { pVal = x; probed = true; });
+      } else if (v && typeof v === "object" && typeof v.then === "function") {
+        let probed = false,
+          pVal: any;
+        v.then((x: any) => {
+          pVal = x;
+          probed = true;
+        });
         if (probed) {
           results[i] = pVal;
         } else {
@@ -742,9 +752,7 @@ function createSyncPromise(): typeof Promise {
           allSync = false;
           break;
         }
-      } else if (
-        v && typeof v === "object" && typeof v.then === "function"
-      ) {
+      } else if (v && typeof v === "object" && typeof v.then === "function") {
         allSync = false;
         break;
       } else {
@@ -786,9 +794,7 @@ function createSyncPromise(): typeof Promise {
       if (v instanceof SyncPromise && (v as any)._syncResolved) {
         return new SyncPromise((res: any) => res((v as any)._syncValue));
       }
-      if (
-        !(v && typeof v === "object" && typeof v.then === "function")
-      ) {
+      if (!(v && typeof v === "object" && typeof v.then === "function")) {
         return new SyncPromise((res: any) => res(v));
       }
     }
@@ -830,12 +836,16 @@ function makeDynamicLoader(
     ) {
       return new SyncThenable(loaded);
     }
-    const spread = loaded && (typeof loaded === "object" || typeof loaded === "function")
-      ? Object.getOwnPropertyNames(loaded as object).reduce((acc, key) => {
-          acc[key] = (loaded as any)[key];
-          return acc;
-        }, {} as Record<string, unknown>)
-      : {};
+    const spread =
+      loaded && (typeof loaded === "object" || typeof loaded === "function")
+        ? Object.getOwnPropertyNames(loaded as object).reduce(
+            (acc, key) => {
+              acc[key] = (loaded as any)[key];
+              return acc;
+            },
+            {} as Record<string, unknown>,
+          )
+        : {};
     return new SyncThenable({
       default: loaded,
       ...spread,
@@ -939,8 +949,8 @@ const CORE_MODULES: Record<string, unknown> = {
   sea: seaPolyfill,
   sqlite: sqlitePolyfill,
   quic: quicPolyfill,
-  lightningcss: lightningcssPolyfill,
-  "@tailwindcss/oxide": tailwindOxidePolyfill,
+  // lightningcss: lightningcssPolyfill,
+  // "@tailwindcss/oxide": tailwindOxidePolyfill,
   sys: helpersPolyfill,
   "util/types": helpersPolyfill.types,
   "path/posix": pathPolyfill,
@@ -1110,9 +1120,11 @@ function buildResolver(
 ): ResolverFn {
   // Shared across all resolvers — avoids re-resolving the same paths/manifests per module
   const resolveCache: Map<string, string | null> =
-    (cache as any).__resolveCache ?? ((cache as any).__resolveCache = new Map());
+    (cache as any).__resolveCache ??
+    ((cache as any).__resolveCache = new Map());
   const manifestCache: Map<string, PackageManifest | null> =
-    (cache as any).__manifestCache ?? ((cache as any).__manifestCache = new Map());
+    (cache as any).__manifestCache ??
+    ((cache as any).__manifestCache = new Map());
   // Shared across all resolvers — deduplicates same-version packages from nested node_modules
   const _pkgIdentityMap: Record<string, string> =
     (cache as any).__pkgIdentityMap ?? ((cache as any).__pkgIdentityMap = {});
@@ -1234,13 +1246,19 @@ function buildResolver(
           sync: noop,
           transform: async (filename: string, code: string, opts?: any) => {
             code = applyDefineReplacements(code, opts?.define);
-            if (!isCSSFile(filename) && (isTypeScriptFile(filename) || looksLikeTypeScript(code)))
+            if (
+              !isCSSFile(filename) &&
+              (isTypeScriptFile(filename) || looksLikeTypeScript(code))
+            )
               code = stripTypeScript(code);
             return { code, map: null, errors: [], warnings: [] };
           },
           transformSync: (filename: string, code: string, opts?: any) => {
             code = applyDefineReplacements(code, opts?.define);
-            if (!isCSSFile(filename) && (isTypeScriptFile(filename) || looksLikeTypeScript(code)))
+            if (
+              !isCSSFile(filename) &&
+              (isTypeScriptFile(filename) || looksLikeTypeScript(code))
+            )
               code = stripTypeScript(code);
             return { code, map: null, errors: [], warnings: [] };
           },
@@ -1250,7 +1268,10 @@ function buildResolver(
             opts?: any,
           ) => {
             code = applyDefineReplacements(code, opts?.define);
-            if (!isCSSFile(filename) && (isTypeScriptFile(filename) || looksLikeTypeScript(code)))
+            if (
+              !isCSSFile(filename) &&
+              (isTypeScriptFile(filename) || looksLikeTypeScript(code))
+            )
               code = stripTypeScript(code);
             return {
               code,
@@ -1267,7 +1288,10 @@ function buildResolver(
             opts?: any,
           ) => {
             code = applyDefineReplacements(code, opts?.define);
-            if (!isCSSFile(filename) && (isTypeScriptFile(filename) || looksLikeTypeScript(code)))
+            if (
+              !isCSSFile(filename) &&
+              (isTypeScriptFile(filename) || looksLikeTypeScript(code))
+            )
               code = stripTypeScript(code);
             return {
               code,
@@ -1303,12 +1327,18 @@ function buildResolver(
             warnings: [],
           }),
           moduleRunnerTransform: async (filename: string, code: string) => {
-            if (!isCSSFile(filename) && (isTypeScriptFile(filename) || looksLikeTypeScript(code)))
+            if (
+              !isCSSFile(filename) &&
+              (isTypeScriptFile(filename) || looksLikeTypeScript(code))
+            )
               code = stripTypeScript(code);
             return { code, map: null, deps: [], dynamicDeps: [], errors: [] };
           },
           moduleRunnerTransformSync: (filename: string, code: string) => {
-            if (!isCSSFile(filename) && (isTypeScriptFile(filename) || looksLikeTypeScript(code)))
+            if (
+              !isCSSFile(filename) &&
+              (isTypeScriptFile(filename) || looksLikeTypeScript(code))
+            )
               code = stripTypeScript(code);
             return { code, map: null, deps: [], dynamicDeps: [], errors: [] };
           },
@@ -1404,7 +1434,9 @@ function buildResolver(
                       )
                         specs.push(node.source.value);
                     }
-                  } catch { /* fallback to regex */ }
+                  } catch {
+                    /* fallback to regex */
+                  }
                   const dynRe = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
                   let m;
                   while ((m = dynRe.exec(code)) !== null) specs.push(m[1]);
@@ -1416,8 +1448,14 @@ function buildResolver(
                     try {
                       await p.buildStart(mockCtx, {});
                     } catch (hookErr) {
-                      const msg = hookErr instanceof Error ? hookErr.message : String(hookErr);
-                      _nativeConsole.warn("[rolldown scan] buildStart hook error:", msg);
+                      const msg =
+                        hookErr instanceof Error
+                          ? hookErr.message
+                          : String(hookErr);
+                      _nativeConsole.warn(
+                        "[rolldown scan] buildStart hook error:",
+                        msg,
+                      );
                     }
                   }
                 }
@@ -1446,8 +1484,15 @@ function buildResolver(
                           if (r && typeof r === "object" && r.code)
                             return r.code;
                         } catch (loadErr) {
-                          const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
-                          _nativeConsole.warn("[rolldown scan] load hook error:", filePath, msg);
+                          const msg =
+                            loadErr instanceof Error
+                              ? loadErr.message
+                              : String(loadErr);
+                          _nativeConsole.warn(
+                            "[rolldown scan] load hook error:",
+                            filePath,
+                            msg,
+                          );
                         }
                       }
                     }
@@ -1487,8 +1532,15 @@ function buildResolver(
                             custom: undefined,
                           });
                         } catch (resolveErr) {
-                          const msg = resolveErr instanceof Error ? resolveErr.message : String(resolveErr);
-                          _nativeConsole.warn("[rolldown scan] resolveId hook error:", spec, msg);
+                          const msg =
+                            resolveErr instanceof Error
+                              ? resolveErr.message
+                              : String(resolveErr);
+                          _nativeConsole.warn(
+                            "[rolldown scan] resolveId hook error:",
+                            spec,
+                            msg,
+                          );
                         }
                       }
                     }
@@ -1527,14 +1579,24 @@ function buildResolver(
                     try {
                       await p.buildEnd(mockCtx);
                     } catch (endErr) {
-                      const msg = endErr instanceof Error ? endErr.message : String(endErr);
-                      _nativeConsole.warn("[rolldown scan] buildEnd hook error:", msg);
+                      const msg =
+                        endErr instanceof Error
+                          ? endErr.message
+                          : String(endErr);
+                      _nativeConsole.warn(
+                        "[rolldown scan] buildEnd hook error:",
+                        msg,
+                      );
                     }
                   }
                 }
               } catch (scanErr) {
-                const msg = scanErr instanceof Error ? scanErr.message : String(scanErr);
-                const detail = scanErr instanceof Error && scanErr.stack ? `\n${scanErr.stack}` : "";
+                const msg =
+                  scanErr instanceof Error ? scanErr.message : String(scanErr);
+                const detail =
+                  scanErr instanceof Error && scanErr.stack
+                    ? `\n${scanErr.stack}`
+                    : "";
                 _nativeConsole.warn("[rolldown scan]", msg);
               }
             }
@@ -1603,11 +1665,14 @@ function buildResolver(
                 const parts = afterNm.split("/");
                 const scoped = parts[0].startsWith("@");
                 const pkgName = scoped ? parts.slice(0, 2).join("/") : parts[0];
-                const pkgRoot = origPath.slice(0, nmIdx) + "/node_modules/" + pkgName;
+                const pkgRoot =
+                  origPath.slice(0, nmIdx) + "/node_modules/" + pkgName;
                 const pkgJsonPath = pkgRoot + "/package.json";
                 try {
                   if (!vol.existsSync(pkgJsonPath)) return null;
-                  const manifest = JSON.parse(vol.readFileSync(pkgJsonPath, "utf8"));
+                  const manifest = JSON.parse(
+                    vol.readFileSync(pkgJsonPath, "utf8"),
+                  );
                   for (const conds of [
                     { browser: true, import: true },
                     { import: true },
@@ -1616,11 +1681,16 @@ function buildResolver(
                       const resolved = resolveExports(manifest, ".", conds);
                       if (resolved?.length) {
                         const full = pathPolyfill.join(pkgRoot, resolved[0]);
-                        if (vol.existsSync(full) && full !== origPath) return full;
+                        if (vol.existsSync(full) && full !== origPath)
+                          return full;
                       }
-                    } catch { /* try next */ }
+                    } catch {
+                      /* try next */
+                    }
                   }
-                } catch { /* can't re-resolve */ }
+                } catch {
+                  /* can't re-resolve */
+                }
                 return null;
               };
 
@@ -1646,7 +1716,10 @@ function buildResolver(
                     target: "esnext",
                     logLevel: "warning",
                   });
-                  return result.outputFiles?.[0]?.text ?? vol.readFileSync(ep, "utf8");
+                  return (
+                    result.outputFiles?.[0]?.text ??
+                    vol.readFileSync(ep, "utf8")
+                  );
                 };
 
                 try {
@@ -1669,8 +1742,15 @@ function buildResolver(
                     }
                   }
                 } catch (buildErr) {
-                  const buildMsg = buildErr instanceof Error ? buildErr.message : String(buildErr);
-                  _nativeConsole.warn("[rolldown bundle] esbuild failed for", entryPath, buildMsg);
+                  const buildMsg =
+                    buildErr instanceof Error
+                      ? buildErr.message
+                      : String(buildErr);
+                  _nativeConsole.warn(
+                    "[rolldown bundle] esbuild failed for",
+                    entryPath,
+                    buildMsg,
+                  );
                   try {
                     code = vol.readFileSync(entryPath, "utf8");
                   } catch {
@@ -1770,10 +1850,13 @@ function buildResolver(
                   if (resolved) {
                     return { id: resolved + querySuffix };
                   }
-                } catch (_e) { /* not found */ }
+                } catch (_e) {
+                  /* not found */
+                }
 
                 if (candidate.startsWith("/")) {
-                  if (vol.existsSync(candidate)) return { id: candidate + querySuffix };
+                  if (vol.existsSync(candidate))
+                    return { id: candidate + querySuffix };
                   const cwd =
                     (typeof globalThis !== "undefined" &&
                       (globalThis as any).process?.cwd?.()) ||
@@ -1782,7 +1865,8 @@ function buildResolver(
                     const abs = cwd + candidate;
                     if (vol.existsSync(abs)) return { id: abs + querySuffix };
                     for (const ext of RESOLVE_EXTENSIONS) {
-                      if (vol.existsSync(abs + ext)) return { id: abs + ext + querySuffix };
+                      if (vol.existsSync(abs + ext))
+                        return { id: abs + ext + querySuffix };
                     }
                   }
                 }
@@ -2079,7 +2163,9 @@ function buildResolver(
     const cached = resolveCache.get(cacheKey);
     if (cached !== undefined) {
       if (cached === null) {
-        const e = new Error(`Cannot find module '${id}'`) as Error & { code: string };
+        const e = new Error(`Cannot find module '${id}'`) as Error & {
+          code: string;
+        };
         e.code = "MODULE_NOT_FOUND";
         throw e;
       }
@@ -2124,7 +2210,9 @@ function buildResolver(
       }
 
       resolveCache.set(cacheKey, null);
-      const e = new Error(`Cannot find module '${id}' from '${fromDir}'`) as Error & { code: string };
+      const e = new Error(
+        `Cannot find module '${id}' from '${fromDir}'`,
+      ) as Error & { code: string };
       e.code = "MODULE_NOT_FOUND";
       throw e;
     }
@@ -2173,7 +2261,8 @@ function buildResolver(
           for (let ai = 0; ai < execArgv.length; ai++) {
             const arg = execArgv[ai];
             if (arg === "--conditions" || arg === "-C") {
-              if (ai + 1 < execArgv.length) extraConditions.push(execArgv[++ai]);
+              if (ai + 1 < execArgv.length)
+                extraConditions.push(execArgv[++ai]);
             } else if (arg.startsWith("--conditions=")) {
               extraConditions.push(arg.slice("--conditions=".length));
             }
@@ -2181,9 +2270,8 @@ function buildResolver(
           const nodeOpts = proc.env?.NODE_OPTIONS || "";
           const condMatch = nodeOpts.matchAll(/(?:--conditions[= ]|-C )(\S+)/g);
           for (const m of condMatch) extraConditions.push(m[1]);
-          const condExtra = extraConditions.length > 0
-            ? { conditions: extraConditions }
-            : {};
+          const condExtra =
+            extraConditions.length > 0 ? { conditions: extraConditions } : {};
 
           const baseSets: Record<string, unknown>[] = preferEsm
             ? [
@@ -2275,12 +2363,17 @@ function buildResolver(
     }
 
     resolveCache.set(cacheKey, null);
-    const e = new Error(`Cannot find module '${id}' from '${fromDir}'`) as Error & { code: string };
+    const e = new Error(
+      `Cannot find module '${id}' from '${fromDir}'`,
+    ) as Error & { code: string };
     e.code = "MODULE_NOT_FOUND";
     throw e;
   };
 
-  const loadModule = (resolved: string, parentRecord?: ModuleRecord): ModuleRecord => {
+  const loadModule = (
+    resolved: string,
+    parentRecord?: ModuleRecord,
+  ): ModuleRecord => {
     if (cache[resolved]) return cache[resolved];
 
     // Package dedup: reuse first instance of name@version:path to prevent
@@ -2289,12 +2382,17 @@ function buildResolver(
     if (nmIdx !== -1) {
       const afterNm = resolved.slice(nmIdx + "/node_modules/".length);
       const parts = afterNm.split("/");
-      const pkgName = parts[0].startsWith("@") ? parts[0] + "/" + parts[1] : parts[0];
+      const pkgName = parts[0].startsWith("@")
+        ? parts[0] + "/" + parts[1]
+        : parts[0];
       const pkgDir = resolved.slice(0, nmIdx) + "/node_modules/" + pkgName;
       try {
-        const pkgJson = JSON.parse(vol.readFileSync(pkgDir + "/package.json", "utf8"));
+        const pkgJson = JSON.parse(
+          vol.readFileSync(pkgDir + "/package.json", "utf8"),
+        );
         // Include file path so different subpath exports (svelte vs svelte/compiler) aren't deduped
-        const identity = pkgName + "@" + (pkgJson.version || "0.0.0") + ":" + afterNm;
+        const identity =
+          pkgName + "@" + (pkgJson.version || "0.0.0") + ":" + afterNm;
         if (!_pkgIdentityMap[identity]) {
           _pkgIdentityMap[identity] = resolved;
         } else if (_pkgIdentityMap[identity] !== resolved) {
@@ -2305,7 +2403,9 @@ function buildResolver(
             return cache[canonical];
           }
         }
-      } catch { /* no package.json */ }
+      } catch {
+        /* no package.json */
+      }
     }
 
     const _loadDepth = ((globalThis as any).__loadModuleDepth ?? 0) + 1;
@@ -2334,11 +2434,15 @@ function buildResolver(
       return record;
     }
 
-    // Native addons can't run in browser — return empty module for fallback
+    // Native .node addons cannot run in the browser — throw so that
+    // callers (e.g. napi-rs packages) fall back to their WASM build.
     if (resolved.endsWith(".node")) {
-      record.exports = {};
-      record.loaded = true;
-      return record;
+      delete cache[resolved];
+      const e = new Error(
+        `Cannot load native addon '${resolved}' — native .node binaries are not supported in the browser`,
+      ) as Error & { code: string };
+      e.code = "ERR_DLOPEN_FAILED";
+      throw e;
     }
 
     const rawSource = vol.readFileSync(resolved, "utf8");
@@ -2366,12 +2470,19 @@ function buildResolver(
           const cjsPatches: Array<[number, number, string]> = [];
           const walkCjs = (node: any) => {
             if (!node || typeof node !== "object") return;
-            if (Array.isArray(node)) { for (const c of node) walkCjs(c); return; }
+            if (Array.isArray(node)) {
+              for (const c of node) walkCjs(c);
+              return;
+            }
             if (typeof node.type !== "string") return;
             if (node.type === "ImportExpression") {
               cjsPatches.push([node.start, node.start + 6, "__asyncLoad"]);
             }
-            if (node.type === "MetaProperty" && node.meta?.name === "import" && node.property?.name === "meta") {
+            if (
+              node.type === "MetaProperty" &&
+              node.meta?.name === "import" &&
+              node.property?.name === "meta"
+            ) {
               cjsPatches.push([
                 node.start,
                 node.end,
@@ -2386,12 +2497,17 @@ function buildResolver(
           };
           walkCjs(cjsAst);
           if (cjsPatches.length > 0) {
-            cjsPatches.sort((a, b) => b[0] - a[0]);
+            cjsPatches.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
             for (const [start, end, replacement] of cjsPatches) {
-              processedCode = processedCode.slice(0, start) + replacement + processedCode.slice(end);
+              processedCode =
+                processedCode.slice(0, start) +
+                replacement +
+                processedCode.slice(end);
             }
           }
-        } catch { /* can't parse — leave untransformed */ }
+        } catch {
+          /* can't parse — leave untransformed */
+        }
       } else {
         processedCode = convertModuleSyntax(processedCode, resolved);
       }
@@ -2401,7 +2517,11 @@ function buildResolver(
     const isCjs = resolved.endsWith(".cjs");
     const moduleHasTLA = !isCjs && hasTopLevelAwait(processedCode);
     const useFullDeAsync = deAsyncImports || moduleHasTLA;
-    if (!isCjs) processedCode = stripTopLevelAwait(processedCode, deAsyncImports ? "full" : "topLevelOnly");
+    if (!isCjs)
+      processedCode = stripTopLevelAwait(
+        processedCode,
+        deAsyncImports ? "full" : "topLevelOnly",
+      );
 
     const childResolver = buildResolver(
       vol,
@@ -2432,7 +2552,9 @@ function buildResolver(
       }
 
       {
-        const srcMap = (globalThis as any).__dbgSrcMap || ((globalThis as any).__dbgSrcMap = new Map());
+        const srcMap =
+          (globalThis as any).__dbgSrcMap ||
+          ((globalThis as any).__dbgSrcMap = new Map());
         srcMap.set(resolved, wrapper);
       }
 
@@ -2521,7 +2643,7 @@ function buildResolver(
     if (typeof id !== "string") {
       // Match real Node.js error: TypeError with ERR_INVALID_ARG_TYPE code
       const err: any = new TypeError(
-        `The "id" argument must be of type string. Received ${id === null ? "null" : typeof id}`
+        `The "id" argument must be of type string. Received ${id === null ? "null" : typeof id}`,
       );
       err.code = "ERR_INVALID_ARG_TYPE";
       throw err;
@@ -2535,7 +2657,11 @@ function buildResolver(
     if (id === "worker_threads") {
       if (opts.workerThreadsOverride) {
         const base = CORE_MODULES["worker_threads"];
-        const override = Object.assign(Object.create(null), base, opts.workerThreadsOverride);
+        const override = Object.assign(
+          Object.create(null),
+          base,
+          opts.workerThreadsOverride,
+        );
         override.default = override;
         return override;
       }
@@ -2558,7 +2684,16 @@ function buildResolver(
             fromPath = fromPath.slice(1);
         }
         const childDir = pathPolyfill.dirname(fromPath);
-        const child = buildResolver(vol, fsBridge, proc, childDir, cache, opts, codeCache, deAsyncImports);
+        const child = buildResolver(
+          vol,
+          fsBridge,
+          proc,
+          childDir,
+          cache,
+          opts,
+          codeCache,
+          deAsyncImports,
+        );
         child.cache = cache;
         return child;
       };
@@ -2572,9 +2707,7 @@ function buildResolver(
         options?: any,
       ) => {
         if (typeof request !== "string") {
-          const err: any = new Error(
-            `Cannot find module '${request}'`,
-          );
+          const err: any = new Error(`Cannot find module '${request}'`);
           err.code = "MODULE_NOT_FOUND";
           throw err;
         }
@@ -2605,14 +2738,16 @@ function buildResolver(
         try {
           return resolveId(request, fromDir);
         } catch {
-          const err: any = new Error(
-            `Cannot find module '${request}'`,
-          );
+          const err: any = new Error(`Cannot find module '${request}'`);
           err.code = "MODULE_NOT_FOUND";
           throw err;
         }
       };
-      PerEngineModule._load = (request: string, parent?: any, isMain?: boolean) => {
+      PerEngineModule._load = (
+        request: string,
+        parent?: any,
+        isMain?: boolean,
+      ) => {
         try {
           return resolver(request);
         } catch {
@@ -2640,10 +2775,81 @@ function buildResolver(
     }
     if (CORE_MODULES[id]) return CORE_MODULES[id];
 
-    const resolved = resolveId(id, baseDir);
+    let resolved: string;
+    try {
+      resolved = resolveId(id, baseDir);
+    } catch (resolveErr: any) {
+      if (
+        resolveErr?.code === "MODULE_NOT_FOUND" &&
+        !id.startsWith("./") &&
+        !id.startsWith("../")
+      ) {
+        // --- Determine WASM alternative package name(s) to try ---
+        const wasmAlts: string[] = [];
+
+        if (id.includes("wasm32-wasi")) {
+          // Explicit wasm32-wasi package — auto-install as-is
+          wasmAlts.push(id);
+        } else {
+          // Platform-specific native package pattern:
+          //   {name}-{platform}-{arch}[-{abi}]
+          // e.g. lightningcss-linux-x64-gnu, @pkg/core-darwin-arm64
+          const platformRe =
+            /^(.+)-(darwin|linux|win32|freebsd|android|sunos)-(x64|x86|arm64|arm|ia32|s390x|ppc64|mips64el|riscv64)(-[a-z]+)?$/;
+          const m = id.match(platformRe);
+          if (m) {
+            const baseName = m[1]; // e.g. "lightningcss" or "@scope/pkg"
+            wasmAlts.push(baseName + "-wasm32-wasi");
+            wasmAlts.push(baseName + "-wasm");
+          }
+        }
+
+        // Try resolving any of the WASM alternatives (already installed)
+        for (const alt of wasmAlts) {
+          resolveCache.delete(`${baseDir}|${alt}`);
+          try {
+            const altResolved = resolveId(alt, baseDir);
+            const altRec = loadModule(altResolved, resolver._ownerRecord);
+            return altRec.exports;
+          } catch {
+            // not installed yet
+          }
+        }
+
+      }
+      throw resolveErr;
+    }
     if (CORE_MODULES[resolved]) return CORE_MODULES[resolved];
 
-    const rec = loadModule(resolved, resolver._ownerRecord);
+    let rec: ModuleRecord;
+    try {
+      rec = loadModule(resolved, resolver._ownerRecord);
+    } catch (loadErr: any) {
+      // When a bare module fails to load (e.g. native binding not found inside
+      // the module), try a WASM drop-in replacement: {name}-wasm or {name}-wasm32-wasi
+      if (
+        !id.startsWith("./") &&
+        !id.startsWith("../") &&
+        !id.startsWith("/") &&
+        (loadErr?.code === "MODULE_NOT_FOUND" ||
+          loadErr?.code === "ERR_DLOPEN_FAILED" ||
+          (loadErr?.message &&
+            /cannot\s+(find|load)\s+(module|native)/i.test(loadErr.message)))
+      ) {
+        const wasmAlts = [id + "-wasm32-wasi", id + "-wasm"];
+        for (const alt of wasmAlts) {
+          try {
+            resolveCache.delete(`${baseDir}|${alt}`);
+            const altResolved = resolveId(alt, baseDir);
+            const altRec = loadModule(altResolved, resolver._ownerRecord);
+            return altRec.exports;
+          } catch {
+            // not available
+          }
+        }
+      }
+      throw loadErr;
+    }
     // Proxy for async WASM — reads from rec.exports at access time so
     // reassigned module.exports is picked up after compilation finishes
     if ((rec as any).__wasmReady) {
@@ -2735,6 +2941,62 @@ export class ScriptEngine {
 
     (globalThis as any).__nodepodVolume = vol;
 
+    // Intercept fetch() for file:// URLs — serve from VFS instead of network.
+    // napi-rs wasm32-wasi packages use fetch(new URL('file.wasm', import.meta.url))
+    // which browsers block. This patches fetch to read from the in-memory filesystem.
+    if (!(globalThis.fetch as any).__nodepodPatched) {
+      const origFetch = globalThis.fetch.bind(globalThis);
+      const patchedFetch = (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        let url: string | undefined;
+        if (typeof input === "string") url = input;
+        else if (input instanceof URL) url = input.href;
+        else if (input instanceof Request) url = input.url;
+
+        if (url?.startsWith("file://")) {
+          // Convert file:// URL to VFS path
+          let vfsPath: string;
+          try {
+            vfsPath = decodeURIComponent(new URL(url).pathname);
+          } catch {
+            vfsPath = decodeURIComponent(url.slice(7));
+          }
+          const v = (globalThis as any).__nodepodVolume as MemoryVolume | undefined;
+          if (v) {
+            try {
+              const data = v.readFileSync(vfsPath);
+              const bytes =
+                data instanceof Uint8Array
+                  ? data
+                  : new TextEncoder().encode(String(data));
+              const contentType = vfsPath.endsWith(".wasm")
+                ? "application/wasm"
+                : "application/octet-stream";
+              return Promise.resolve(
+                new Response(bytes.buffer.slice(
+                  bytes.byteOffset,
+                  bytes.byteOffset + bytes.byteLength,
+                ) as ArrayBuffer, {
+                  status: 200,
+                  headers: { "Content-Type": contentType },
+                }),
+              );
+            } catch {
+              return Promise.resolve(
+                new Response("Not found", { status: 404 }),
+              );
+            }
+          }
+        }
+        return origFetch(input, init);
+      };
+      (globalThis as any).fetch = Object.assign(patchedFetch, {
+        __nodepodPatched: true,
+      });
+    }
+
     if (typeof globalThis.setImmediate === "undefined") {
       (globalThis as any).setImmediate = (
         fn: (...a: unknown[]) => void,
@@ -2766,7 +3028,9 @@ export class ScriptEngine {
             const cached2 = getCachedModule(bytes);
             if (cached2) return cached2;
             const compilePromise = compileWasmInWorker(
-              bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes as Uint8Array,
+              bytes instanceof ArrayBuffer
+                ? new Uint8Array(bytes)
+                : (bytes as Uint8Array),
             );
             (globalThis as any).__wasmCompilePromise = compilePromise;
           }
@@ -2793,11 +3057,23 @@ export class ScriptEngine {
         const obj = {
           _id: id,
           _ref: true,
-          ref() { obj._ref = true; return obj; },
-          unref() { obj._ref = false; return obj; },
-          hasRef() { return obj._ref; },
-          refresh() { return obj; },
-          [Symbol.toPrimitive]() { return id; },
+          ref() {
+            obj._ref = true;
+            return obj;
+          },
+          unref() {
+            obj._ref = false;
+            return obj;
+          },
+          hasRef() {
+            return obj._ref;
+          },
+          refresh() {
+            return obj;
+          },
+          [Symbol.toPrimitive]() {
+            return id;
+          },
         };
         return obj;
       };
@@ -2806,11 +3082,23 @@ export class ScriptEngine {
         const obj = {
           _id: id,
           _ref: true,
-          ref() { obj._ref = true; return obj; },
-          unref() { obj._ref = false; return obj; },
-          hasRef() { return obj._ref; },
-          refresh() { return obj; },
-          [Symbol.toPrimitive]() { return id; },
+          ref() {
+            obj._ref = true;
+            return obj;
+          },
+          unref() {
+            obj._ref = false;
+            return obj;
+          },
+          hasRef() {
+            return obj._ref;
+          },
+          refresh() {
+            return obj;
+          },
+          [Symbol.toPrimitive]() {
+            return id;
+          },
         };
         return obj;
       };
@@ -3090,12 +3378,19 @@ export class ScriptEngine {
         const cjsPatches: Array<[number, number, string]> = [];
         const walkCjs = (node: any) => {
           if (!node || typeof node !== "object") return;
-          if (Array.isArray(node)) { for (const c of node) walkCjs(c); return; }
+          if (Array.isArray(node)) {
+            for (const c of node) walkCjs(c);
+            return;
+          }
           if (typeof node.type !== "string") return;
           if (node.type === "ImportExpression") {
             cjsPatches.push([node.start, node.start + 6, "__asyncLoad"]);
           }
-          if (node.type === "MetaProperty" && node.meta?.name === "import" && node.property?.name === "meta") {
+          if (
+            node.type === "MetaProperty" &&
+            node.meta?.name === "import" &&
+            node.property?.name === "meta"
+          ) {
             cjsPatches.push([
               node.start,
               node.end,
@@ -3112,10 +3407,13 @@ export class ScriptEngine {
         if (cjsPatches.length > 0) {
           cjsPatches.sort((a, b) => b[0] - a[0]);
           for (const [start, end, replacement] of cjsPatches) {
-            processed = processed.slice(0, start) + replacement + processed.slice(end);
+            processed =
+              processed.slice(0, start) + replacement + processed.slice(end);
           }
         }
-      } catch { /* can't parse */ }
+      } catch {
+        /* can't parse */
+      }
     } else {
       processed = convertModuleSyntax(processed, filename);
     }

@@ -39,7 +39,7 @@ export declare class ProcessManager extends EventEmitter {
         statusCode: number;
         statusMessage: string;
         headers: Record<string, string>;
-        body: string;
+        body: string | ArrayBuffer;
     }>;
     dispatchWsUpgrade(port: number, uid: string, path: string, headers: Record<string, string>): number;
     dispatchWsData(pid: number, uid: string, frame: number[]): void;

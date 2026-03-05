@@ -375,8 +375,18 @@ async function walkDependency(
       Object.assign(edges, versionInfo.dependencies);
     }
 
-    if (config.optionalDependencies && versionInfo.optionalDependencies) {
-      Object.assign(edges, versionInfo.optionalDependencies);
+    if (versionInfo.optionalDependencies) {
+      if (config.optionalDependencies) {
+        Object.assign(edges, versionInfo.optionalDependencies);
+      } else {
+        // Always include wasm32-wasi optional deps — they're WASM alternatives
+        // to native bindings and are the only variant that can run in-browser
+        for (const [optName, optRange] of Object.entries(versionInfo.optionalDependencies)) {
+          if (optName.includes("wasm32-wasi")) {
+            edges[optName] = optRange as string;
+          }
+        }
+      }
     }
 
     const edgeList = Object.entries(edges);

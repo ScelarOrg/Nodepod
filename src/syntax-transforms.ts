@@ -237,7 +237,7 @@ function esmToCjsViaAst(code: string): string {
   collectEsmCjsPatches(ast as any, code, patches);
 
   let output = code;
-  patches.sort((a, b) => b[0] - a[0]);
+  patches.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
   for (const [s, e, r] of patches)
     output = output.slice(0, s) + r + output.slice(e);
   return output;
@@ -439,7 +439,7 @@ export function stripTopLevelAwait(
     if (patches.length === 0) return code;
 
     let output = code;
-    patches.sort((a, b) => b[0] - a[0]);
+    patches.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
     for (const [start, end, replacement] of patches) {
       output = output.slice(0, start) + replacement + output.slice(end);
     }

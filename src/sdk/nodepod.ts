@@ -8,6 +8,7 @@ import type {
   NodepodOptions,
   TerminalOptions,
   Snapshot,
+  SnapshotOptions,
   SpawnOptions,
 } from "./types";
 import { NodepodFS } from "./nodepod-fs";
@@ -96,11 +97,15 @@ export class Nodepod {
           const result = await this._processManager.dispatchHttpRequest(
             port, method, url, headers, bodyStr,
           );
+          // Body can be ArrayBuffer (binary) or string (text)
+          const respBody = result.body instanceof ArrayBuffer
+            ? Buffer.from(new Uint8Array(result.body))
+            : Buffer.from(result.body);
           return {
             statusCode: result.statusCode,
             statusMessage: result.statusMessage,
             headers: result.headers,
-            body: Buffer.from(result.body),
+            body: respBody,
           };
         },
       };
@@ -477,14 +482,25 @@ export class Nodepod {
 
   /* ---- snapshot / restore ---- */
 
-  snapshot(): Snapshot {
-    return this._volume.toSnapshot();
+  private static readonly SHALLOW_EXCLUDE = ['/node_modules'];
+
+  snapshot(opts?: SnapshotOptions): Snapshot {
+    const shallow = opts?.shallow ?? true;
+    const excludes = shallow ? Nodepod.SHALLOW_EXCLUDE : undefined;
+    return this._volume.toSnapshot(excludes);
   }
 
-  restore(snapshot: Snapshot): void {
-    // No clearAll on MemoryVolume, so just swap the internal tree
+  async restore(snapshot: Snapshot, opts?: SnapshotOptions): Promise<void> {
+    const autoInstall = opts?.autoInstall ?? true;
+
+    // Swap the internal tree
     const fresh = MemoryVolume.fromSnapshot(snapshot);
     (this._volume as any).tree = (fresh as any).tree;
+
+    // Auto-install deps from package.json if requested and manifest exists
+    if (autoInstall && this._volume.existsSync('/package.json')) {
+      await this._packages.installFromManifest();
+    }
   }
 
   /* ---- teardown ---- */

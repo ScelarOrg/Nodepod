@@ -582,7 +582,33 @@ export function buildProcessEnv(config?: {
     binding(name: string): Record<string, unknown> {
       if (name === "natives") return {};
       if (name === "config") return { exposeInternals: false };
-      if (name === "constants") return {};
+      if (name === "constants")
+        return {
+          os: {
+            UV_UDP_REUSEADDR: 4,
+            signals: {
+              SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGILL: 4, SIGTRAP: 5,
+              SIGABRT: 6, SIGBUS: 7, SIGFPE: 8, SIGKILL: 9, SIGUSR1: 10,
+              SIGSEGV: 11, SIGUSR2: 12, SIGPIPE: 13, SIGALRM: 14, SIGTERM: 15,
+              SIGCHLD: 17, SIGCONT: 18, SIGSTOP: 19, SIGTSTP: 20, SIGTTIN: 21,
+              SIGTTOU: 22, SIGURG: 23, SIGXCPU: 24, SIGXFSZ: 25, SIGVTALRM: 26,
+              SIGPROF: 27, SIGWINCH: 28, SIGIO: 29, SIGPWR: 30, SIGSYS: 31,
+            },
+            errno: {},
+          },
+          fs: {
+            O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128,
+            O_NOCTTY: 256, O_TRUNC: 512, O_APPEND: 1024, O_NONBLOCK: 2048,
+            O_DSYNC: 4096, O_SYNC: 1052672, O_DIRECT: 16384, O_DIRECTORY: 65536,
+            O_NOATIME: 262144, O_NOFOLLOW: 131072, O_CLOEXEC: 524288,
+            UV_FS_O_FILEMAP: 0,
+            S_IFMT: 61440, S_IFREG: 32768, S_IFDIR: 16384, S_IFCHR: 8192,
+            S_IFBLK: 24576, S_IFIFO: 4096, S_IFLNK: 40960, S_IFSOCK: 49152,
+            F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+          },
+          crypto: {},
+          zlib: {},
+        };
       if (name === "util") return {};
       if (name === "fs") return {};
       if (name === "buffer") return {};

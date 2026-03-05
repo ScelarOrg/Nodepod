@@ -61,6 +61,13 @@ export interface StatResult {
 
 export type Snapshot = VolumeSnapshot;
 
+export interface SnapshotOptions {
+  /** Exclude node_modules and other auto-installable dirs. Default: true */
+  shallow?: boolean;
+  /** Auto-install deps from package.json after restoring a shallow snapshot. Default: true */
+  autoInstall?: boolean;
+}
+
 /* ---- Spawn ---- */
 
 export interface SpawnOptions {

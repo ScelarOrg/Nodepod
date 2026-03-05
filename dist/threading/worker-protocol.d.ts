@@ -216,7 +216,7 @@ export interface WorkerToMain_HttpResponse {
     statusCode: number;
     statusMessage: string;
     headers: Record<string, string>;
-    body: string;
+    body: string | ArrayBuffer;
 }
 export interface WorkerToMain_IPC {
     type: "ipc-message";

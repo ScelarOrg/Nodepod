@@ -72,7 +72,7 @@ export declare class MemoryVolume {
     off(event: 'change', handler: FileChangeHandler): this;
     off(event: 'delete', handler: FileDeleteHandler): this;
     private broadcast;
-    toSnapshot(): VolumeSnapshot;
+    toSnapshot(excludePrefixes?: string[]): VolumeSnapshot;
     private collectEntries;
     static fromBinarySnapshot(snapshot: {
         manifest: Array<{

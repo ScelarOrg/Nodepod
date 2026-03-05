@@ -218,13 +218,19 @@ export class MemoryVolume {
 
   // ---- Snapshot serialization ----
 
-  toSnapshot(): VolumeSnapshot {
+  toSnapshot(excludePrefixes?: string[]): VolumeSnapshot {
     const entries: VolumeEntry[] = [];
-    this.collectEntries('/', this.tree, entries);
+    this.collectEntries('/', this.tree, entries, excludePrefixes);
     return { entries };
   }
 
-  private collectEntries(currentPath: string, node: VolumeNode, result: VolumeEntry[]): void {
+  private collectEntries(currentPath: string, node: VolumeNode, result: VolumeEntry[], excludePrefixes?: string[]): void {
+    if (excludePrefixes) {
+      for (const prefix of excludePrefixes) {
+        if (currentPath === prefix || currentPath.startsWith(prefix + '/')) return;
+      }
+    }
+
     if (node.kind === 'file') {
       let data = '';
       if (node.content && node.content.length > 0) {
@@ -238,7 +244,7 @@ export class MemoryVolume {
       if (node.children) {
         for (const [name, child] of node.children) {
           const childPath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-          this.collectEntries(childPath, child, result);
+          this.collectEntries(childPath, child, result, excludePrefixes);
         }
       }
     }
