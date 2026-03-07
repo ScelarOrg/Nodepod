@@ -1986,6 +1986,9 @@ export function spawn(
     }, 0);
   }
 
+  // real Node emits this on next tick so listeners can attach first
+  queueMicrotask(() => child.emit("spawn"));
+
   return child;
 }
 

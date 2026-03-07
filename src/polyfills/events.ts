@@ -2,6 +2,8 @@
 // EventEmitter.call(this) and Object.create(EventEmitter.prototype) work.
 // ES6 classes forbid calling without `new`, which breaks tons of npm packages.
 
+import { ref, unref } from "../helpers/event-loop";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type EventHandler = (...args: any[]) => void;
 
@@ -171,16 +173,28 @@ EventEmitter.prototype.emit = function emit(name: string, ...payload: unknown[])
     return false;
   }
 
+  // if a handler returns a promise, hold a ref so the process doesn't bail early
+  const trackResult = (result: unknown) => {
+    if (result && typeof (result as any).then === "function") {
+      ref();
+      (result as Promise<unknown>).then(() => unref(), () => unref());
+    }
+  };
+
   // Fast path: single listener — avoid slice() allocation
   if (slot.length === 1) {
-    try { slot[0].apply(this, payload); } catch (_) { /* swallow */ }
+    try {
+      const r = slot[0].apply(this, payload);
+      trackResult(r);
+    } catch (_) { /* swallow */ }
     return true;
   }
 
   const snapshot = slot.slice();
   for (const handler of snapshot) {
     try {
-      handler.apply(this, payload);
+      const r = handler.apply(this, payload);
+      trackResult(r);
     } catch (fault) {
       /* swallow handler errors */
     }

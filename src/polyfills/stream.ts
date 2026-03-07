@@ -1404,7 +1404,39 @@ export const Stream = function Stream(this: any) {
 Object.setPrototypeOf(Stream.prototype, EventEmitter.prototype);
 
 Stream.prototype.pipe = function pipe(dest: any): any {
+  const src = this;
+  const onData = (chunk: any) => {
+    if (dest.write) dest.write(chunk);
+  };
+  src.on("data", onData);
+  const onEnd = () => {
+    if (dest.end) dest.end();
+  };
+  src.on("end", onEnd);
+  // store for unpipe
+  if (!src._pipeDests) src._pipeDests = [];
+  src._pipeDests.push({ dest, onData, onEnd });
   return dest;
+};
+
+Stream.prototype.unpipe = function unpipe(dest?: any): any {
+  const dests: Array<{ dest: any; onData: Function; onEnd: Function }> =
+    this._pipeDests || [];
+  if (dest) {
+    const idx = dests.findIndex((d: any) => d.dest === dest);
+    if (idx !== -1) {
+      this.removeListener("data", dests[idx].onData as any);
+      this.removeListener("end", dests[idx].onEnd as any);
+      dests.splice(idx, 1);
+    }
+  } else {
+    for (const d of dests) {
+      this.removeListener("data", d.onData as any);
+      this.removeListener("end", d.onEnd as any);
+    }
+    this._pipeDests = [];
+  }
+  return this;
 };
 
 export function addAbortSignal(
@@ -1452,6 +1484,19 @@ export function pipeline(...args: unknown[]): unknown {
         0,
       );
     return streams[0];
+  }
+
+  // web ReadableStreams (like fetch response.body) don't have .pipe(), wrap them
+  for (let i = 0; i < streams.length; i++) {
+    const s = streams[i];
+    if (
+      s &&
+      typeof s.getReader === "function" &&
+      typeof s.pipe !== "function" &&
+      typeof s.on !== "function"
+    ) {
+      streams[i] = Readable.fromWeb(s);
+    }
   }
 
   let errorOccurred = false;

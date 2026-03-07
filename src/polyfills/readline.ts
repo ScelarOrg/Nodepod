@@ -1,10 +1,10 @@
-// readline polyfill -- createInterface, emitKeypressEvents, terminal helpers.
-// tracks line/cursor on every keystroke because @clack reads rl.line directly.
+// readline polyfill — createInterface, emitKeypressEvents, terminal helpers
+// we track line/cursor on every keystroke because @clack reads rl.line directly
 
 import { EventEmitter } from "./events";
 import { ref as _elRef, unref as _elUnref } from "../helpers/event-loop";
 
-// child_process wait loop checks this to avoid exiting while waiting for user input
+// the wait loop checks this so it doesn't bail while the user is typing
 let _activeInterfaceCount = 0;
 
 export function getActiveInterfaceCount(): number {
@@ -26,17 +26,20 @@ export interface InterfaceConfig {
   terminal?: boolean;
   prompt?: string;
   historySize?: number;
+  history?: string[];
+  removeHistoryDuplicates?: boolean;
   completer?: (line: string) => [string[], string] | void;
   crlfDelay?: number;
   escapeCodeTimeout?: number;
   tabSize?: number;
+  signal?: AbortSignal;
 }
 
-// emitKeypressEvents: parse data events into keypress events
+// turns raw data events into proper keypress events
 
 const KEYPRESS_DECODER = Symbol("keypressDecoder");
 
-// mirrors Node.js internal emitKeys generator
+// parses individual chars (including escape sequences) and fires keypress
 function parseAndEmitKeypress(
   stream: any,
   char: string,
@@ -47,10 +50,11 @@ function parseAndEmitKeypress(
     const seq = escapeBuf.join("");
 
     if (seq.length >= 3 && seq[1] === "[") {
-      // CSI sequence
+      // CSI escape sequence (arrows, home, end, etc.)
       const lastChar = seq[seq.length - 1];
       if (/[A-Za-z~]/.test(lastChar)) {
-          let name = "";
+        let name = "";
+        let ctrl = false;
         if (lastChar === "A") name = "up";
         else if (lastChar === "B") name = "down";
         else if (lastChar === "C") name = "right";
@@ -61,12 +65,14 @@ function parseAndEmitKeypress(
         else if (seq === "\x1b[2~") name = "insert";
         else if (seq === "\x1b[5~") name = "pageup";
         else if (seq === "\x1b[6~") name = "pagedown";
+        else if (seq === "\x1b[1;5C") { name = "right"; ctrl = true; }  // Ctrl+Right
+        else if (seq === "\x1b[1;5D") { name = "left"; ctrl = true; }   // Ctrl+Left
         else name = lastChar;
 
         stream.emit("keypress", seq, {
           sequence: seq,
           name,
-          ctrl: false,
+          ctrl,
           meta: false,
           shift: false,
         });
@@ -107,9 +113,15 @@ function parseAndEmitKeypress(
     }
 
     if (seq.length >= 2 && seq[1] !== "[" && seq[1] !== "O") {
+      // Alt+letter combo
+      const metaChar = seq[1];
+      let name = metaChar;
+      if (metaChar.charCodeAt(0) >= 32) {
+        name = metaChar.toLowerCase();
+      }
       stream.emit("keypress", seq, {
         sequence: seq,
-        name: "escape",
+        name,
         ctrl: false,
         meta: true,
         shift: false,
@@ -131,7 +143,6 @@ function parseAndEmitKeypress(
   else if (char === "\t") name = "tab";
   else if (char === " ") name = "space";
   else if (char.charCodeAt(0) < 32) {
-    // Ctrl+letter
     ctrl = true;
     name = String.fromCharCode(char.charCodeAt(0) + 96);
   }
@@ -166,7 +177,7 @@ export function emitKeypressEvents(stream: unknown, _iface?: Interface): void {
       }
       escapeBuf = parseAndEmitKeypress(stream as any, char, escapeBuf);
 
-      // flush pending escape after timeout
+      // if we're mid-escape, flush it after a short timeout
       if (escapeBuf.length > 0) {
         escapeTimeout = setTimeout(() => {
           if (escapeBuf.length > 0) {
@@ -186,23 +197,48 @@ export function emitKeypressEvents(stream: unknown, _iface?: Interface): void {
   });
 }
 
+// word boundary helpers for Ctrl+Left/Right, Ctrl+W, etc.
+
+function wordLeft(line: string, cursor: number): number {
+  let i = cursor - 1;
+  while (i >= 0 && /\s/.test(line[i])) i--;
+  while (i >= 0 && !/\s/.test(line[i])) i--;
+  return i + 1;
+}
+
+function wordRight(line: string, cursor: number): number {
+  let i = cursor;
+  while (i < line.length && !/\s/.test(line[i])) i++;
+  while (i < line.length && /\s/.test(line[i])) i++;
+  return i;
+}
+
 
 export interface Interface extends EventEmitter {
   _promptStr: string;
-  _input: unknown;
-  _output: unknown;
-  _closed: boolean;
+  input: unknown;
+  output: unknown;
+  closed: boolean;
   _lineBuffer: string;
   _pendingQuestions: Array<{
     query: string;
     handler: (answer: string) => void;
+    signal?: AbortSignal;
+    abortListener?: () => void;
   }>;
   terminal: boolean;
   line: string;
   cursor: number;
+  history: string[];
+  _historyIndex: number;
+  _historySize: number;
+  _removeHistoryDuplicates: boolean;
+  _savedLine: string;
+  _killRing: string[];
   _refreshLine(): void;
   _onKeypress(char: string | undefined, key: any): void;
   _onData(text: string): void;
+  _addToHistory(line: string): void;
   prompt(preserveCursor?: boolean): void;
   setPrompt(text: string): void;
   getPrompt(): string;
@@ -211,6 +247,7 @@ export interface Interface extends EventEmitter {
   resume(): this;
   close(): void;
   write(data: string | null, _key?: { ctrl?: boolean; name?: string; meta?: boolean; shift?: boolean; sequence?: string }): void;
+  clearLine(dir?: number): void;
   getCursorPos(): { rows: number; cols: number };
   [Symbol.asyncIterator](): AsyncGenerator<string, void, undefined>;
 }
@@ -225,38 +262,60 @@ export const Interface = function Interface(this: any, cfg?: InterfaceConfig) {
   if (!this) return;
   EventEmitter.call(this);
   this._promptStr = cfg?.prompt ?? "> ";
-  this._input = cfg?.input;
-  this._output = cfg?.output;
-  this._closed = false;
+  this.input = cfg?.input;
+  this.output = cfg?.output;
+  this.closed = false;
   this._lineBuffer = "";
   this._pendingQuestions = [];
   this.terminal = cfg?.terminal ?? false;
   this.line = "";
   this.cursor = 0;
 
-  if (this._input && typeof (this._input as any).on === "function") {
+  this._historySize = cfg?.historySize ?? 30;
+  this._removeHistoryDuplicates = cfg?.removeHistoryDuplicates ?? false;
+  this.history = Array.isArray(cfg?.history) ? cfg!.history.slice(0, this._historySize) : [];
+  this._historyIndex = -1;
+  this._savedLine = "";
+  this._killRing = [];
+
+  if (cfg?.signal) {
+    const signal = cfg.signal;
+    if (signal.aborted) {
+      queueMicrotask(() => this.close());
+    } else {
+      const onAbort = () => this.close();
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+
+  if (this.input && typeof (this.input as any).on === "function") {
     _activeInterfaceCount++;
     _elRef();
-    const inputStream = this._input as EventEmitter;
+    const inputStream = this.input as EventEmitter;
     const self = this;
 
     if (this.terminal) {
-      emitKeypressEvents(this._input, this);
+      // raw mode so we get individual keystrokes instead of line-buffered input
+      if (typeof (this.input as any).setRawMode === "function") {
+        (this.input as any).setRawMode(true);
+      }
+
+      emitKeypressEvents(this.input, this);
 
       inputStream.on("keypress", (char: string | undefined, key: any) => {
-        if (self._closed) return;
+        if (self.closed) return;
         self._onKeypress(char, key);
       });
     } else {
       inputStream.on("data", (data: unknown) => {
-        if (self._closed) return;
+        if (self.closed) return;
         const text = typeof data === "string" ? data : String(data);
         self._onData(text);
       });
     }
 
     inputStream.on("end", () => {
-      if (!self._closed) self.close();
+      if (!self.closed) self.close();
     });
   }
 } as unknown as InterfaceConstructor;
@@ -264,26 +323,62 @@ export const Interface = function Interface(this: any, cfg?: InterfaceConfig) {
 Object.setPrototypeOf(Interface.prototype, EventEmitter.prototype);
 
 Interface.prototype._refreshLine = function _refreshLine(this: any): void {
-  if (this._output && typeof (this._output as any).write === "function") {
-    (this._output as any).write(this.line);
+  if (this.output && typeof (this.output as any).write === "function") {
+    (this.output as any).write(this.line);
   }
+};
+
+Interface.prototype._addToHistory = function _addToHistory(this: any, line: string): void {
+  if (this._historySize === 0 || !line) return;
+
+  if (this._removeHistoryDuplicates) {
+    const idx = this.history.indexOf(line);
+    if (idx !== -1) this.history.splice(idx, 1);
+  }
+
+  this.history.unshift(line);
+  if (this.history.length > this._historySize) {
+    this.history.length = this._historySize;
+  }
+
+  this._historyIndex = -1;
+  this.emit("history", this.history);
 };
 
 Interface.prototype._onKeypress = function _onKeypress(this: any, char: string | undefined, key: any): void {
   if (!key) return;
 
+  // Ctrl+C
   if (key.ctrl && key.name === "c") {
-    this.close();
+    if (this.listenerCount("SIGINT") > 0) {
+      this.emit("SIGINT");
+    } else {
+      this.close();
+    }
     return;
   }
 
+  // Ctrl+Z
+  if (key.ctrl && key.name === "z") {
+    if (this.listenerCount("SIGTSTP") > 0) {
+      this.emit("SIGTSTP");
+    }
+    return;
+  }
+
+  // Enter — submit the line
   if (key.name === "return") {
     const line = this._lineBuffer;
     this._lineBuffer = "";
     this.line = line;
 
+    this._addToHistory(line);
+
     if (this._pendingQuestions.length > 0) {
       const q = this._pendingQuestions.shift()!;
+      if (q.signal && q.abortListener) {
+        q.signal.removeEventListener("abort", q.abortListener);
+      }
       q.handler(line);
     }
 
@@ -293,8 +388,10 @@ Interface.prototype._onKeypress = function _onKeypress(this: any, char: string |
     return;
   }
 
+  // Backspace
   if (key.name === "backspace") {
     if (this.cursor > 0) {
+      const deleted = this._lineBuffer[this.cursor - 1];
       this._lineBuffer =
         this._lineBuffer.slice(0, this.cursor - 1) +
         this._lineBuffer.slice(this.cursor);
@@ -305,6 +402,7 @@ Interface.prototype._onKeypress = function _onKeypress(this: any, char: string |
     return;
   }
 
+  // Delete
   if (key.name === "delete") {
     if (this.cursor < this._lineBuffer.length) {
       this._lineBuffer =
@@ -316,28 +414,111 @@ Interface.prototype._onKeypress = function _onKeypress(this: any, char: string |
     return;
   }
 
-  if (key.name === "left") {
+  // Ctrl+D — delete char or close if empty
+  if (key.ctrl && key.name === "d") {
+    if (this._lineBuffer.length === 0) {
+      this.close();
+    } else if (this.cursor < this._lineBuffer.length) {
+      this._lineBuffer =
+        this._lineBuffer.slice(0, this.cursor) +
+        this._lineBuffer.slice(this.cursor + 1);
+      this.line = this._lineBuffer;
+      this._refreshLine();
+    }
+    return;
+  }
+
+  // arrow keys
+  if (key.name === "left" && !key.ctrl && !key.meta) {
     this.cursor = Math.max(0, this.cursor - 1);
     this._refreshLine();
     return;
   }
-  if (key.name === "right") {
+  if (key.name === "right" && !key.ctrl && !key.meta) {
     this.cursor = Math.min(this._lineBuffer.length, this.cursor + 1);
     this._refreshLine();
     return;
   }
-  if (key.name === "home") {
+
+  // Ctrl+Left / Alt+B — jump word left
+  if ((key.ctrl && key.name === "left") || (key.meta && key.name === "b")) {
+    this.cursor = wordLeft(this._lineBuffer, this.cursor);
+    this._refreshLine();
+    return;
+  }
+
+  // Ctrl+Right / Alt+F — jump word right
+  if ((key.ctrl && key.name === "right") || (key.meta && key.name === "f")) {
+    this.cursor = wordRight(this._lineBuffer, this.cursor);
+    this._refreshLine();
+    return;
+  }
+
+  // Home / Ctrl+A
+  if (key.name === "home" || (key.ctrl && key.name === "a")) {
     this.cursor = 0;
     this._refreshLine();
     return;
   }
-  if (key.name === "end") {
+
+  // End / Ctrl+E
+  if (key.name === "end" || (key.ctrl && key.name === "e")) {
     this.cursor = this._lineBuffer.length;
     this._refreshLine();
     return;
   }
 
+  // Ctrl+B — back one char
+  if (key.ctrl && key.name === "b") {
+    this.cursor = Math.max(0, this.cursor - 1);
+    this._refreshLine();
+    return;
+  }
+
+  // Ctrl+F — forward one char
+  if (key.ctrl && key.name === "f") {
+    this.cursor = Math.min(this._lineBuffer.length, this.cursor + 1);
+    this._refreshLine();
+    return;
+  }
+
+  // Up / Ctrl+P — previous history entry
+  if (key.name === "up" || (key.ctrl && key.name === "p")) {
+    if (this.history.length > 0 && this._historyIndex < this.history.length - 1) {
+      if (this._historyIndex === -1) {
+        this._savedLine = this._lineBuffer;
+      }
+      this._historyIndex++;
+      this._lineBuffer = this.history[this._historyIndex];
+      this.cursor = this._lineBuffer.length;
+      this.line = this._lineBuffer;
+      this._refreshLine();
+    }
+    return;
+  }
+
+  // Down / Ctrl+N — next history entry
+  if (key.name === "down" || (key.ctrl && key.name === "n")) {
+    if (this._historyIndex > 0) {
+      this._historyIndex--;
+      this._lineBuffer = this.history[this._historyIndex];
+      this.cursor = this._lineBuffer.length;
+      this.line = this._lineBuffer;
+      this._refreshLine();
+    } else if (this._historyIndex === 0) {
+      this._historyIndex = -1;
+      this._lineBuffer = this._savedLine;
+      this.cursor = this._lineBuffer.length;
+      this.line = this._lineBuffer;
+      this._refreshLine();
+    }
+    return;
+  }
+
+  // Ctrl+U — kill everything before cursor
   if (key.ctrl && key.name === "u") {
+    const killed = this._lineBuffer.slice(0, this.cursor);
+    if (killed) this._killRing.push(killed);
     this._lineBuffer = this._lineBuffer.slice(this.cursor);
     this.cursor = 0;
     this.line = this._lineBuffer;
@@ -345,13 +526,17 @@ Interface.prototype._onKeypress = function _onKeypress(this: any, char: string |
     return;
   }
 
+  // Ctrl+K — kill everything after cursor
   if (key.ctrl && key.name === "k") {
+    const killed = this._lineBuffer.slice(this.cursor);
+    if (killed) this._killRing.push(killed);
     this._lineBuffer = this._lineBuffer.slice(0, this.cursor);
     this.line = this._lineBuffer;
     this._refreshLine();
     return;
   }
 
+  // Ctrl+H — same as backspace
   if (key.ctrl && key.name === "h") {
     if (this.cursor > 0) {
       this._lineBuffer =
@@ -364,6 +549,58 @@ Interface.prototype._onKeypress = function _onKeypress(this: any, char: string |
     return;
   }
 
+  // Ctrl+W — delete word backward
+  if (key.ctrl && key.name === "w") {
+    const newPos = wordLeft(this._lineBuffer, this.cursor);
+    const killed = this._lineBuffer.slice(newPos, this.cursor);
+    if (killed) this._killRing.push(killed);
+    this._lineBuffer =
+      this._lineBuffer.slice(0, newPos) +
+      this._lineBuffer.slice(this.cursor);
+    this.cursor = newPos;
+    this.line = this._lineBuffer;
+    this._refreshLine();
+    return;
+  }
+
+  // Alt+D — delete word forward
+  if (key.meta && key.name === "d") {
+    const newPos = wordRight(this._lineBuffer, this.cursor);
+    const killed = this._lineBuffer.slice(this.cursor, newPos);
+    if (killed) this._killRing.push(killed);
+    this._lineBuffer =
+      this._lineBuffer.slice(0, this.cursor) +
+      this._lineBuffer.slice(newPos);
+    this.line = this._lineBuffer;
+    this._refreshLine();
+    return;
+  }
+
+  // Ctrl+Y — paste last killed text
+  if (key.ctrl && key.name === "y") {
+    if (this._killRing.length > 0) {
+      const text = this._killRing[this._killRing.length - 1];
+      this._lineBuffer =
+        this._lineBuffer.slice(0, this.cursor) +
+        text +
+        this._lineBuffer.slice(this.cursor);
+      this.cursor += text.length;
+      this.line = this._lineBuffer;
+      this._refreshLine();
+    }
+    return;
+  }
+
+  // Ctrl+L — clear screen
+  if (key.ctrl && key.name === "l") {
+    if (this.output && typeof (this.output as any).write === "function") {
+      (this.output as any).write("\x1b[2J\x1b[H");
+    }
+    this._refreshLine();
+    return;
+  }
+
+  // regular printable character
   if (
     char &&
     !key.ctrl &&
@@ -390,8 +627,13 @@ Interface.prototype._onData = function _onData(this: any, text: string): void {
       this._lineBuffer = "";
       this.line = line;
 
+      this._addToHistory(line);
+
       if (this._pendingQuestions.length > 0) {
         const q = this._pendingQuestions.shift()!;
+        if (q.signal && q.abortListener) {
+          q.signal.removeEventListener("abort", q.abortListener);
+        }
         q.handler(line);
       }
 
@@ -420,8 +662,8 @@ Interface.prototype._onData = function _onData(this: any, text: string): void {
 };
 
 Interface.prototype.prompt = function prompt(this: any, preserveCursor?: boolean): void {
-  if (this._output && typeof (this._output as any).write === "function") {
-    (this._output as any).write(this._promptStr);
+  if (this.output && typeof (this.output as any).write === "function") {
+    (this.output as any).write(this._promptStr);
   }
   if (!preserveCursor) {
     this.cursor = 0;
@@ -444,52 +686,92 @@ Interface.prototype.question = function question(
   optsOrHandler?: unknown,
   handler?: (answer: string) => void,
 ): void {
-  const actualHandler =
-    typeof optsOrHandler === "function"
-      ? (optsOrHandler as (answer: string) => void)
-      : handler;
-  if (!actualHandler) return;
+  let actualHandler: ((answer: string) => void) | undefined;
+  let signal: AbortSignal | undefined;
 
-  if (this._output && typeof (this._output as any).write === "function") {
-    (this._output as any).write(query);
+  if (typeof optsOrHandler === "function") {
+    actualHandler = optsOrHandler as (answer: string) => void;
+  } else if (optsOrHandler && typeof optsOrHandler === "object") {
+    signal = (optsOrHandler as any).signal;
+    actualHandler = handler;
+  } else {
+    actualHandler = handler;
   }
 
-  if (this._input && typeof (this._input as any).on === "function") {
-    this._pendingQuestions.push({ query, handler: actualHandler });
+  if (!actualHandler) return;
+
+  if (signal?.aborted) {
+    const err = new DOMException("The operation was aborted", "AbortError");
+    throw err;
+  }
+
+  if (this.output && typeof (this.output as any).write === "function") {
+    (this.output as any).write(query);
+  }
+
+  if (this.input && typeof (this.input as any).on === "function") {
+    const entry: any = { query, handler: actualHandler, signal };
+
+    if (signal) {
+      const onAbort = () => {
+        const idx = this._pendingQuestions.indexOf(entry);
+        if (idx !== -1) this._pendingQuestions.splice(idx, 1);
+        actualHandler!("");
+      };
+      entry.abortListener = onAbort;
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    this._pendingQuestions.push(entry);
   } else {
-    setTimeout(() => actualHandler(""), 0);
+    setTimeout(() => actualHandler!(""), 0);
   }
 };
 
 Interface.prototype.pause = function pause(this: any): any {
-  if (this._input && typeof (this._input as any).pause === "function") {
-    (this._input as any).pause();
+  if (this.input && typeof (this.input as any).pause === "function") {
+    (this.input as any).pause();
   }
   this.emit("pause");
   return this;
 };
 
 Interface.prototype.resume = function resume(this: any): any {
-  if (this._input && typeof (this._input as any).resume === "function") {
-    (this._input as any).resume();
+  if (this.input && typeof (this.input as any).resume === "function") {
+    (this.input as any).resume();
   }
   this.emit("resume");
   return this;
 };
 
 Interface.prototype.close = function close(this: any): void {
-  if (this._closed) return;
-  this._closed = true;
-  if (this._input && typeof (this._input as any).on === "function") {
+  if (this.closed) return;
+  this.closed = true;
+  // put raw mode back how it was
+  if (this.terminal && this.input && typeof (this.input as any).setRawMode === "function") {
+    (this.input as any).setRawMode(false);
+  }
+  if (this.input && typeof (this.input as any).on === "function") {
     _activeInterfaceCount = Math.max(0, _activeInterfaceCount - 1);
     _elUnref();
   }
+  // answer any pending questions with empty string
   for (const q of this._pendingQuestions) {
+    if (q.signal && q.abortListener) {
+      q.signal.removeEventListener("abort", q.abortListener);
+    }
     q.handler("");
   }
   this._pendingQuestions.length = 0;
   this.emit("close");
 };
+
+// `using rl = ...` support
+if (typeof Symbol.dispose !== "undefined") {
+  (Interface.prototype as any)[Symbol.dispose] = function (this: any): void {
+    this.close();
+  };
+}
 
 Interface.prototype.write = function write(
   this: any,
@@ -502,20 +784,23 @@ Interface.prototype.write = function write(
     sequence?: string;
   },
 ): void {
-  if (this._closed) return;
+  if (this.closed) return;
 
   if (data === null || data === undefined) {
     if (_key) {
-      // emit synthetic keypress on input so external listeners (e.g. @clack) see it
+      // fire a keypress on input so things like @clack pick it up
       const emitOnInput =
-        this._input && typeof (this._input as any).emit === "function";
+        this.input && typeof (this.input as any).emit === "function";
 
       if (_key.ctrl && _key.name === "c") {
-        this.close();
+        if (this.listenerCount("SIGINT") > 0) {
+          this.emit("SIGINT");
+        } else {
+          this.close();
+        }
         return;
       }
       if (_key.ctrl && _key.name === "h") {
-        // Backspace
         if (this.cursor > 0) {
           this._lineBuffer =
             this._lineBuffer.slice(0, this.cursor - 1) +
@@ -524,7 +809,7 @@ Interface.prototype.write = function write(
           this.line = this._lineBuffer;
         }
         if (emitOnInput) {
-          (this._input as any).emit("keypress", "\x7f", {
+          (this.input as any).emit("keypress", "\x7f", {
             sequence: "\x7f",
             name: "backspace",
             ctrl: false,
@@ -535,22 +820,90 @@ Interface.prototype.write = function write(
         return;
       }
       if (_key.ctrl && _key.name === "u") {
+        const killed = this._lineBuffer.slice(0, this.cursor);
+        if (killed) this._killRing.push(killed);
         this._lineBuffer = this._lineBuffer.slice(this.cursor);
         this.cursor = 0;
         this.line = this._lineBuffer;
         return;
       }
       if (_key.ctrl && _key.name === "k") {
+        const killed = this._lineBuffer.slice(this.cursor);
+        if (killed) this._killRing.push(killed);
         this._lineBuffer = this._lineBuffer.slice(0, this.cursor);
         this.line = this._lineBuffer;
         return;
       }
-      if (_key.name === "left") {
+      if (_key.ctrl && _key.name === "w") {
+        const newPos = wordLeft(this._lineBuffer, this.cursor);
+        const killed = this._lineBuffer.slice(newPos, this.cursor);
+        if (killed) this._killRing.push(killed);
+        this._lineBuffer =
+          this._lineBuffer.slice(0, newPos) +
+          this._lineBuffer.slice(this.cursor);
+        this.cursor = newPos;
+        this.line = this._lineBuffer;
+        return;
+      }
+      if (_key.ctrl && _key.name === "y") {
+        if (this._killRing.length > 0) {
+          const text = this._killRing[this._killRing.length - 1];
+          this._lineBuffer =
+            this._lineBuffer.slice(0, this.cursor) +
+            text +
+            this._lineBuffer.slice(this.cursor);
+          this.cursor += text.length;
+          this.line = this._lineBuffer;
+        }
+        return;
+      }
+      if (_key.ctrl && _key.name === "a") {
+        this.cursor = 0;
+        return;
+      }
+      if (_key.ctrl && _key.name === "e") {
+        this.cursor = this._lineBuffer.length;
+        return;
+      }
+      if (_key.ctrl && _key.name === "b") {
         this.cursor = Math.max(0, this.cursor - 1);
         return;
       }
-      if (_key.name === "right") {
+      if (_key.ctrl && _key.name === "f") {
         this.cursor = Math.min(this._lineBuffer.length, this.cursor + 1);
+        return;
+      }
+      if (_key.ctrl && _key.name === "d") {
+        if (this._lineBuffer.length === 0) {
+          this.close();
+        } else if (this.cursor < this._lineBuffer.length) {
+          this._lineBuffer =
+            this._lineBuffer.slice(0, this.cursor) +
+            this._lineBuffer.slice(this.cursor + 1);
+          this.line = this._lineBuffer;
+        }
+        return;
+      }
+      if (_key.ctrl && _key.name === "l") {
+        if (this.output && typeof (this.output as any).write === "function") {
+          (this.output as any).write("\x1b[2J\x1b[H");
+        }
+        return;
+      }
+      if (_key.name === "left") {
+        if (_key.ctrl || _key.meta) {
+          this.cursor = wordLeft(this._lineBuffer, this.cursor);
+        } else {
+          this.cursor = Math.max(0, this.cursor - 1);
+        }
+        return;
+      }
+      if (_key.name === "right") {
+        if (_key.ctrl || _key.meta) {
+          this.cursor = wordRight(this._lineBuffer, this.cursor);
+        } else {
+          this.cursor = Math.min(this._lineBuffer.length, this.cursor + 1);
+        }
         return;
       }
       if (_key.name === "home") {
@@ -561,27 +914,90 @@ Interface.prototype.write = function write(
         this.cursor = this._lineBuffer.length;
         return;
       }
+      if (_key.name === "up") {
+        if (this.history.length > 0 && this._historyIndex < this.history.length - 1) {
+          if (this._historyIndex === -1) this._savedLine = this._lineBuffer;
+          this._historyIndex++;
+          this._lineBuffer = this.history[this._historyIndex];
+          this.cursor = this._lineBuffer.length;
+          this.line = this._lineBuffer;
+        }
+        return;
+      }
+      if (_key.name === "down") {
+        if (this._historyIndex > 0) {
+          this._historyIndex--;
+          this._lineBuffer = this.history[this._historyIndex];
+          this.cursor = this._lineBuffer.length;
+          this.line = this._lineBuffer;
+        } else if (this._historyIndex === 0) {
+          this._historyIndex = -1;
+          this._lineBuffer = this._savedLine;
+          this.cursor = this._lineBuffer.length;
+          this.line = this._lineBuffer;
+        }
+        return;
+      }
+      if (_key.meta && _key.name === "b") {
+        this.cursor = wordLeft(this._lineBuffer, this.cursor);
+        return;
+      }
+      if (_key.meta && _key.name === "f") {
+        this.cursor = wordRight(this._lineBuffer, this.cursor);
+        return;
+      }
+      if (_key.meta && _key.name === "d") {
+        const newPos = wordRight(this._lineBuffer, this.cursor);
+        const killed = this._lineBuffer.slice(this.cursor, newPos);
+        if (killed) this._killRing.push(killed);
+        this._lineBuffer =
+          this._lineBuffer.slice(0, this.cursor) +
+          this._lineBuffer.slice(newPos);
+        this.line = this._lineBuffer;
+        return;
+      }
     }
     return;
   }
 
   if (_key?.ctrl && _key?.name === "c") {
-    this.close();
+    if (this.listenerCount("SIGINT") > 0) {
+      this.emit("SIGINT");
+    } else {
+      this.close();
+    }
     return;
   }
 
   this._onData(data);
 };
 
+// @inquirer calls rl.clearLine(0) directly so we need this on the interface
+Interface.prototype.clearLine = function clearLine(this: any, dir?: number): void {
+  this._lineBuffer = "";
+  this.line = "";
+  this.cursor = 0;
+  if (this.output && typeof (this.output as any).clearLine === "function") {
+    (this.output as any).clearLine(dir ?? 0);
+  }
+};
+
 Interface.prototype.getCursorPos = function getCursorPos(this: any): { rows: number; cols: number } {
-  return { rows: 0, cols: this.cursor };
+  // cursor position relative to prompt, wrapping at terminal width
+  const promptLen = typeof this._promptStr === "string" ? this._promptStr.length : 0;
+  const columns = (this.output && (this.output as any).columns) || 80;
+  const offset = promptLen + this.cursor;
+  return {
+    rows: Math.floor(offset / columns),
+    cols: offset % columns,
+  };
 };
 
 Interface.prototype[Symbol.asyncIterator] = async function*(this: any): AsyncGenerator<string, void, undefined> {
   const self = this;
-  while (!self._closed) {
+  while (!self.closed) {
     const line = await new Promise<string | null>((resolve) => {
-      if (self._closed) {
+      if (self.closed) {
         resolve(null);
         return;
       }
@@ -662,21 +1078,127 @@ export function moveCursor(
 }
 
 
+// promises API
+
+class ReadlineWriter {
+  private _stream: any;
+  private _buffer: string[];
+  private _autoCommit: boolean;
+
+  constructor(stream: any, opts?: { autoCommit?: boolean }) {
+    this._stream = stream;
+    this._buffer = [];
+    this._autoCommit = opts?.autoCommit ?? false;
+  }
+
+  clearLine(dir: -1 | 0 | 1): this {
+    let seq: string;
+    if (dir === -1) seq = "\x1b[1K";
+    else if (dir === 1) seq = "\x1b[0K";
+    else seq = "\x1b[2K";
+    if (this._autoCommit) {
+      this._stream.write(seq);
+    } else {
+      this._buffer.push(seq);
+    }
+    return this;
+  }
+
+  clearScreenDown(): this {
+    const seq = "\x1b[J";
+    if (this._autoCommit) {
+      this._stream.write(seq);
+    } else {
+      this._buffer.push(seq);
+    }
+    return this;
+  }
+
+  cursorTo(x: number, y?: number): this {
+    let seq: string;
+    if (y !== undefined) {
+      seq = `\x1b[${y + 1};${x + 1}H`;
+    } else {
+      seq = `\x1b[${x + 1}G`;
+    }
+    if (this._autoCommit) {
+      this._stream.write(seq);
+    } else {
+      this._buffer.push(seq);
+    }
+    return this;
+  }
+
+  moveCursor(dx: number, dy: number): this {
+    const parts: string[] = [];
+    if (dx > 0) parts.push(`\x1b[${dx}C`);
+    else if (dx < 0) parts.push(`\x1b[${-dx}D`);
+    if (dy > 0) parts.push(`\x1b[${dy}B`);
+    else if (dy < 0) parts.push(`\x1b[${-dy}A`);
+    const seq = parts.join("");
+    if (seq) {
+      if (this._autoCommit) {
+        this._stream.write(seq);
+      } else {
+        this._buffer.push(seq);
+      }
+    }
+    return this;
+  }
+
+  commit(): Promise<void> {
+    if (this._buffer.length > 0) {
+      this._stream.write(this._buffer.join(""));
+      this._buffer.length = 0;
+    }
+    return Promise.resolve();
+  }
+
+  rollback(): this {
+    this._buffer.length = 0;
+    return this;
+  }
+}
+
 export const promises = {
-  createInterface(cfg?: InterfaceConfig) {
+  createInterface(cfg?: InterfaceConfig): any {
     const rl = createInterface(cfg);
-    return {
-      question(query: string): Promise<string> {
-        return new Promise((resolve) => rl.question(query, resolve));
-      },
-      close(): void {
-        rl.close();
-      },
-      async *[Symbol.asyncIterator](): AsyncGenerator<string, void, undefined> {
-        yield* rl;
-      },
+    const wrapper: any = Object.create(rl);
+
+    wrapper.question = function (
+      query: string,
+      opts?: { signal?: AbortSignal },
+    ): Promise<string> {
+      return new Promise((resolve, reject) => {
+        if (opts?.signal?.aborted) {
+          reject(new DOMException("The operation was aborted", "AbortError"));
+          return;
+        }
+
+        let onAbort: (() => void) | undefined;
+
+        const handler = (answer: string) => {
+          if (opts?.signal && onAbort) {
+            opts.signal.removeEventListener("abort", onAbort);
+          }
+          resolve(answer);
+        };
+
+        if (opts?.signal) {
+          onAbort = () => {
+            reject(new DOMException("The operation was aborted", "AbortError"));
+          };
+          opts.signal.addEventListener("abort", onAbort, { once: true });
+        }
+
+        rl.question(query, handler);
+      });
     };
+
+    return wrapper;
   },
+
+  Readline: ReadlineWriter,
 };
 
 
